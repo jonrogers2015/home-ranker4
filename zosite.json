@@ -1,0 +1,15 @@
+{
+  "name": "home-ranker6",
+  "local_port": 53805,
+  "entrypoint": "bun run dev",
+  "publish": {
+    "label": "home-ranker6",
+    "type": "http",
+    "entrypoint": "bun run prod",
+    "published_port": 57960,
+    "env": {
+      "NODE_ENV": "production",
+      "ZO_CLIENT_IDENTITY_TOKEN": "none"
+    }
+  }
+}
