@@ -81,14 +81,31 @@ export default function HomeRankerApp() {
     if (res.ok) {
       const data = await res.json();
       console.log("[DEBUG] Response:", data);
+      const resolvedCategories = data.categories?.length > 0 ? data.categories : presetCategories;
+      setCategories(resolvedCategories);
       setHouses(data.houses || []);
-      setCategories(data.categories?.length > 0 ? data.categories : presetCategories);
       if (data.houses?.length > 0) setCurrentHouseId(data.houses[0].id);
       // Load agent's properties for customer to choose from
       if (data.agentId) {
         const propsRes = await fetch(`/api/agent/${data.agentId}/properties`);
         const propsData = await propsRes.json();
         setAgentPropertiesForCustomer(propsData.properties || []);
+        if ((!data.houses || data.houses.length === 0) && propsData.properties?.length > 0) {
+          const defaultHouses: House[] = propsData.properties.map((p: Property) => ({
+            id: crypto.randomUUID(),
+            address: p.address,
+            ratings: {},
+            notes: p.notes || '',
+            photos: p.photos || [],
+            daysOnMarket: p.daysOnMarket
+          }));
+          setHouses(defaultHouses);
+          await fetch(`/api/customer/${cid}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ houses: defaultHouses, categories: resolvedCategories, agentId: data.agentId })
+          });
+        }
       }
       setUserType('customer');
     }
