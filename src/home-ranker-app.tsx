@@ -123,12 +123,15 @@ export default function HomeRankerApp() {
         setAgentPropertiesForCustomer(fetchedAgentProperties);
         if (customerHouses.length === 0 && fetchedAgentProperties.length > 0) {
           customerHouses = fetchedAgentProperties.map(buildHouseFromProperty);
+          console.log('[DEBUG] Seeding workspace with', customerHouses.length, 'properties for customer', cid);
           await persistCustomerWorkspace(cid, customerHouses, resolvedCategories, data.agentId);
         }
+        console.log('[DEBUG] After seeding, houses count:', customerHouses.length);
       } else {
         setAgentPropertiesForCustomer([]);
       }
       setCustomerAgentId(data.agentId || null);
+      console.log('[DEBUG] Final houses set:', customerHouses);
       setHouses(customerHouses);
       if (customerHouses.length > 0) setCurrentHouseId(customerHouses[0].id);
       setUserType('customer');
