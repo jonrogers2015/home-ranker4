@@ -54,6 +54,10 @@ export default function HomeRankerApp() {
   const [newPropertyNotes, setNewPropertyNotes] = useState('');
   const [isAddingProperty, setIsAddingProperty] = useState(false);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
+  const [showCreateCustomer, setShowCreateCustomer] = useState(false);
+  const [newCustomerEmail, setNewCustomerEmail] = useState('');
+  const [agentPropertiesForCustomer, setAgentPropertiesForCustomer] = useState<Property[]>([]);
+  const [isAddingHouse, setIsAddingHouse] = useState(false);
   
   
   
@@ -80,6 +84,12 @@ export default function HomeRankerApp() {
       setHouses(data.houses || []);
       setCategories(data.categories?.length > 0 ? data.categories : presetCategories);
       if (data.houses?.length > 0) setCurrentHouseId(data.houses[0].id);
+      // Load agent's properties for customer to choose from
+      if (data.agentId) {
+        const propsRes = await fetch(`/api/agent/${data.agentId}/properties`);
+        const propsData = await propsRes.json();
+        setAgentPropertiesForCustomer(propsData.properties || []);
+      }
       setUserType('customer');
     }
   };
@@ -135,7 +145,32 @@ export default function HomeRankerApp() {
   };
 
   const loginAsCustomer = async () => {
-    await fetchCustomerData(customerId);
+    if (!customerId.trim()) return;
+    setLoginError(null);
+    setIsLoggingIn(true);
+    
+    try {
+      // Look up customer by email
+      const res = await fetch('/api/customer/lookup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: customerId })
+      });
+      
+      const data = await res.json();
+      console.log("[DEBUG] Customer lookup:", data);
+      
+      if (data.customerId) {
+        await fetchCustomerData(data.customerId);
+      } else {
+        setLoginError(data.error || 'Failed to find customer');
+      }
+    } catch (err) {
+      console.error("[DEBUG] Login error:", err);
+      setLoginError('Network error. Please try again.');
+    } finally {
+      setIsLoggingIn(false);
+    }
   };
 
   const loadAgentProperties = async (id: string) => {
@@ -145,17 +180,56 @@ export default function HomeRankerApp() {
     setProperties(data.properties || []);
   };
 
+  const addProperty = async () => {
+    if (!agentId || !newPropertyAddress.trim()) return;
+    setIsAddingProperty(true);
+    try {
+      const res = await fetch(`/api/agent/${agentId}/properties`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          address: newPropertyAddress,
+          daysOnMarket: newPropertyDays ? parseInt(newPropertyDays) : null,
+          notes: newPropertyNotes,
+          photos: []
+        })
+      });
+      const data = await res.json();
+      if (data.propertyId) {
+        setProperties([...properties, {
+          id: data.propertyId,
+          address: newPropertyAddress,
+          daysOnMarket: newPropertyDays ? parseInt(newPropertyDays) : undefined,
+          notes: newPropertyNotes,
+          photos: []
+        }]);
+        setNewPropertyAddress('');
+        setNewPropertyDays('');
+        setNewPropertyNotes('');
+        setShowAddProperty(false);
+      }
+    } catch (err) {
+      console.error('Failed to add property:', err);
+    } finally {
+      setIsAddingProperty(false);
+    }
+  };
+
   const createCustomer = async () => {
-    if (!agentId) return;
+    if (!agentId || !newCustomerEmail.trim()) return;
+    
     const res = await fetch(`/api/agent/${agentId}/customers`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: newCustomerEmail })
     });
     const data = await res.json();
-      console.log("[DEBUG] Response:", data);
+    console.log("[DEBUG] Response:", data);
     if (data.customerId) {
       setNewCustomerId(data.customerId);
       setShowCustomerLink(true);
+      setNewCustomerEmail('');
+      setShowCreateCustomer(false);
     }
   };
 
@@ -165,6 +239,32 @@ export default function HomeRankerApp() {
     navigator.clipboard.writeText(link);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+  };
+
+  const addHouseFromProperty = async (property: Property) => {
+    setIsAddingHouse(true);
+    try {
+      const newHouse: House = {
+        id: crypto.randomUUID(),
+        address: property.address,
+        ratings: {},
+        notes: '',
+        photos: property.photos || [],
+        daysOnMarket: property.daysOnMarket
+      };
+      const updatedHouses = [...houses, newHouse];
+      setHouses(updatedHouses);
+      // Save to server
+      await fetch(`/api/customer/${customerId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ houses: updatedHouses, categories })
+      });
+    } catch (err) {
+      console.error('Failed to add house:', err);
+    } finally {
+      setIsAddingHouse(false);
+    }
   };
 
   // Auth Screen
@@ -203,13 +303,13 @@ export default function HomeRankerApp() {
             
             {/* Customer Login */}
             <div className="bg-green-50 rounded-xl p-4">
-              <label htmlFor="customerId" className="block font-semibold text-green-800 mb-3">Customer Access</label>
+              <label htmlFor="customerEmail" className="block font-semibold text-green-800 mb-3">Customer Access</label>
               <input
-                type="text" id="customerId" name="customerId"
+                type="email" id="customerEmail" name="customerEmail"
                 value={customerId}
                 onChange={e => setCustomerId(e.target.value)}
                 className="w-full p-3 border border-slate-200 rounded-lg mb-2"
-                placeholder="Enter customer ID"
+                placeholder="your@email.com"
               />
               <button onClick={loginAsCustomer} className="w-full p-2 bg-green-600 text-white rounded-lg hover:bg-green-700">
                 Access My Workspace
@@ -240,7 +340,7 @@ export default function HomeRankerApp() {
                 {showAddProperty ? 'Cancel' : 'Add Property'}
               </button>
               <button 
-                onClick={createCustomer} 
+                onClick={() => setShowCreateCustomer(true)} 
                 className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
               >
                 <UserPlus className="w-4 h-4" />
@@ -251,6 +351,41 @@ export default function HomeRankerApp() {
               </button>
             </div>
           </div>
+
+          {/* Create Customer Form */}
+          {showCreateCustomer && (
+            <div className="bg-green-50 border border-green-200 rounded-xl shadow-lg p-6 mb-6">
+              <h3 className="text-lg font-semibold text-green-800 mb-4">Create New Customer</h3>
+              <div className="space-y-4">
+                <div>
+                  <label htmlFor="customerEmail" className="block text-sm font-medium text-slate-700 mb-1">Customer Email *</label>
+                  <input
+                    id="customerEmail"
+                    type="email"
+                    value={newCustomerEmail}
+                    onChange={e => setNewCustomerEmail(e.target.value)}
+                    className="w-full p-3 border border-slate-200 rounded-lg"
+                    placeholder="customer@example.com"
+                  />
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={createCustomer}
+                    disabled={!newCustomerEmail.trim()}
+                    className="px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50"
+                  >
+                    Create & Show Link
+                  </button>
+                  <button
+                    onClick={() => { setShowCreateCustomer(false); setNewCustomerEmail(''); }}
+                    className="px-4 py-2 text-slate-600 hover:bg-slate-200 rounded-lg"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Add Property Form */}
           {showAddProperty && (
@@ -404,21 +539,53 @@ export default function HomeRankerApp() {
     );
   }
 
-  // Customer Workspace (simplified)
+  // Customer Workspace (with agent's shared properties)
   return (
     <div className="min-h-screen bg-slate-50 p-6">
       <div className="max-w-4xl mx-auto">
         <div className="bg-white rounded-xl shadow-lg p-6 mb-6 flex justify-between items-center">
-          <h1 className="text-2xl font-bold text-slate-800">My Home Ranker</h1>
+          <div>
+            <h1 className="text-2xl font-bold text-slate-800">My Home Ranker</h1>
+            <p className="text-sm text-slate-500">Your workspace</p>
+          </div>
           <button onClick={() => setUserType(null)} className="p-2 text-slate-600 hover:bg-slate-100 rounded-lg">
             <LogOut className="w-5 h-5" />
           </button>
         </div>
         
+        {/* Agent's shared properties - customer can add to their workspace */}
+        {agentPropertiesForCustomer.length > 0 && (
+          <div className="bg-white rounded-xl shadow-lg p-6 mb-6">
+            <h2 className="text-lg font-semibold mb-4">Properties to Rank ({agentPropertiesForCustomer.length})</h2>
+            <p className="text-sm text-slate-500 mb-4">Tap a property to add it to your ranking workspace</p>
+            <div className="space-y-2">
+              {agentPropertiesForCustomer.map((p) => {
+                const alreadyAdded = houses.some(h => h.address === p.address);
+                return (
+                  <div 
+                    key={p.id} 
+                    onClick={() => !alreadyAdded && addHouseFromProperty(p)}
+                    className={`p-4 border rounded-lg cursor-pointer transition ${
+                      alreadyAdded 
+                        ? 'border-green-300 bg-green-50 cursor-default' 
+                        : 'border-slate-200 hover:border-blue-400 hover:bg-blue-50'
+                    }`}
+                  >
+                    <div className="font-medium">{p.address}</div>
+                    {p.daysOnMarket && <div className="text-sm text-slate-500">{p.daysOnMarket} days on market</div>}
+                    {alreadyAdded && <div className="text-sm text-green-600 font-medium mt-1">✓ Added to your workspace</div>}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+        
+        {/* Customer's ranking workspace */}
         <div className="bg-white rounded-xl shadow-lg p-6">
-          <h2 className="text-lg font-semibold mb-4">My Properties ({houses.length})</h2>
+          <h2 className="text-lg font-semibold mb-4">My Properties to Rank ({houses.length})</h2>
           {houses.length === 0 ? (
-            <p className="text-slate-500">No properties yet. Ask your agent to share properties with you.</p>
+            <p className="text-slate-500">No properties added yet. Tap a property above to add it.</p>
           ) : (
             <div className="space-y-2">
               {houses.map(h => (

@@ -24,6 +24,7 @@ db.run(`
   CREATE TABLE IF NOT EXISTS customers (
     id TEXT PRIMARY KEY,
     agentId TEXT,
+    email TEXT,
     createdAt INTEGER
   );
   
@@ -104,17 +105,68 @@ app.delete('/api/agent/:agentId/properties/:propertyId', (c) => {
 
 // Create customer
 app.post('/api/customer', async (c) => {
-  const { agentId } = await c.req.json();
+  const { agentId, email } = await c.req.json();
   const id = crypto.randomUUID().replace(/-/g, '').slice(0, 12);
   db.prepare('INSERT INTO customers (id, agentId, createdAt) VALUES (?, ?, ?)')
     .run(id, agentId, Date.now());
   return c.json({ customerId: id });
 });
 
+// Customer login with email
+app.post('/api/customer/login', async (c) => {
+  const { email, agentId } = await c.req.json();
+  
+  // Try to find existing customer by email for this agent
+  const existing = db.prepare(
+    'SELECT c.id FROM customers c WHERE c.email = ? AND c.agentId = ?'
+  ).get(email, agentId) as any;
+  
+  if (existing) {
+    return c.json({ customerId: existing.id });
+  }
+  
+  // Create new customer
+  const id = crypto.randomUUID().replace(/-/g, '').slice(0, 12);
+  db.prepare('INSERT INTO customers (id, agentId, email, createdAt) VALUES (?, ?, ?, ?)')
+    .run(id, agentId, email, Date.now());
+  return c.json({ customerId: id, isNew: true });
+});
+
+// Customer lookup by email (for login)
+app.post('/api/customer/lookup', async (c) => {
+  const { email } = await c.req.json();
+  
+  // Search all customers for this email across all agents
+  const customer = db.prepare('SELECT id, agentId FROM customers WHERE email = ?').get(email) as any;
+  
+  if (!customer) {
+    return c.json({ error: 'No account found with that email. Ask your agent to create one for you.' }, 404);
+  }
+  
+  return c.json({ customerId: customer.id, agentId: customer.agentId });
+});
+
 // Create customer for specific agent (agent endpoint)
 app.post("/api/agent/:agentId/customers", async (c) => {
   const { agentId } = c.req.param();
+  const { email } = await c.req.json();
   const id = crypto.randomUUID().replace(/-/g, "").slice(0, 12);
+  
+  if (email) {
+    // Check if customer with this email already exists for this agent
+    const existing = db.prepare(
+      'SELECT id FROM customers WHERE email = ? AND agentId = ?'
+    ).get(email, agentId) as any;
+    
+    if (existing) {
+      return c.json({ customerId: existing.id, portalUrl: "/customer/" + existing.id });
+    }
+    
+    db.prepare("INSERT INTO customers (id, agentId, email, createdAt) VALUES (?, ?, ?, ?)")
+      .run(id, agentId, email, Date.now());
+    return c.json({ customerId: id, portalUrl: "/customer/" + id });
+  }
+  
   db.prepare("INSERT INTO customers (id, agentId, createdAt) VALUES (?, ?, ?)")
     .run(id, agentId, Date.now());
   return c.json({ customerId: id, portalUrl: "/customer/" + id });
