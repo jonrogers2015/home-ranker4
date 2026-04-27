@@ -58,6 +58,7 @@ export default function HomeRankerApp() {
   const [newCustomerEmail, setNewCustomerEmail] = useState('');
   const [agentPropertiesForCustomer, setAgentPropertiesForCustomer] = useState<Property[]>([]);
   const [isAddingHouse, setIsAddingHouse] = useState(false);
+  const [customerAgentId, setCustomerAgentId] = useState<string | null>(null);
   
   
   
@@ -76,37 +77,60 @@ export default function HomeRankerApp() {
     }
   }, []);
 
+  const buildHouseFromProperty = (property: Property): House => ({
+    id: crypto.randomUUID(),
+    address: property.address,
+    ratings: {},
+    notes: property.notes || '',
+    photos: property.photos || [],
+    daysOnMarket: property.daysOnMarket
+  });
+
+  const persistCustomerWorkspace = async (
+    cid: string,
+    workspaceHouses: House[],
+    workspaceCategories: Category[],
+    agentIdValue: string | null
+  ) => {
+    try {
+      await fetch(`/api/customer/${cid}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          houses: workspaceHouses,
+          categories: workspaceCategories,
+          agentId: agentIdValue
+        })
+      });
+    } catch (err) {
+      console.error('Failed to persist customer workspace:', err);
+    }
+  };
+
   const fetchCustomerData = async (cid: string) => {
     const res = await fetch(`/api/customer/${cid}`);
     if (res.ok) {
       const data = await res.json();
       console.log("[DEBUG] Response:", data);
       const resolvedCategories = data.categories?.length > 0 ? data.categories : presetCategories;
+      let customerHouses: House[] = data.houses || [];
       setCategories(resolvedCategories);
-      setHouses(data.houses || []);
-      if (data.houses?.length > 0) setCurrentHouseId(data.houses[0].id);
-      // Load agent's properties for customer to choose from
+      let fetchedAgentProperties: Property[] = [];
       if (data.agentId) {
         const propsRes = await fetch(`/api/agent/${data.agentId}/properties`);
         const propsData = await propsRes.json();
-        setAgentPropertiesForCustomer(propsData.properties || []);
-        if ((!data.houses || data.houses.length === 0) && propsData.properties?.length > 0) {
-          const defaultHouses: House[] = propsData.properties.map((p: Property) => ({
-            id: crypto.randomUUID(),
-            address: p.address,
-            ratings: {},
-            notes: p.notes || '',
-            photos: p.photos || [],
-            daysOnMarket: p.daysOnMarket
-          }));
-          setHouses(defaultHouses);
-          await fetch(`/api/customer/${cid}`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ houses: defaultHouses, categories: resolvedCategories, agentId: data.agentId })
-          });
+        fetchedAgentProperties = propsData.properties || [];
+        setAgentPropertiesForCustomer(fetchedAgentProperties);
+        if (customerHouses.length === 0 && fetchedAgentProperties.length > 0) {
+          customerHouses = fetchedAgentProperties.map(buildHouseFromProperty);
+          await persistCustomerWorkspace(cid, customerHouses, resolvedCategories, data.agentId);
         }
+      } else {
+        setAgentPropertiesForCustomer([]);
       }
+      setCustomerAgentId(data.agentId || null);
+      setHouses(customerHouses);
+      if (customerHouses.length > 0) setCurrentHouseId(customerHouses[0].id);
       setUserType('customer');
     }
   };
@@ -272,11 +296,7 @@ export default function HomeRankerApp() {
       const updatedHouses = [...houses, newHouse];
       setHouses(updatedHouses);
       // Save to server
-      await fetch(`/api/customer/${customerId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ houses: updatedHouses, categories })
-      });
+      await persistCustomerWorkspace(customerId, updatedHouses, categories, customerAgentId);
     } catch (err) {
       console.error('Failed to add house:', err);
     } finally {
